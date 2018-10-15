@@ -1,0 +1,77 @@
+description = "H2O REST API bindings"
+
+apply plugin: 'java'
+
+// Common constants
+def runner = new File("$rootDir/scripts/run.py").canonicalPath
+def binDir = file("bin")
+def srcGenBindingsDir = file("src-gen/main") // TODO: this setting is not properly passed to gen_all.py
+
+// Configuration for code generator
+configurations {
+  srcGenCompile
+}
+
+dependencies {
+    compile 'com.squareup.retrofit2:retrofit:2.0.1'
+    compile 'com.squareup.retrofit2:converter-gson:2.0.1'  
+    compile 'com.squareup.okhttp3:okhttp:3.3.1'
+    compile 'com.squareup.okio:okio:1.8.0'
+
+    testCompile project(":h2o-app")
+    testCompile "junit:junit:${junitVersion}"
+
+    // Generator dependencies
+    srcGenCompile project( path: ":h2o-assembly", configuration: "shadow")
+}
+
+// Configure idea import
+idea {
+    module {
+        jdkName = 'inherited'
+        generatedSourceDirs += srcGenBindingsDir
+    }
+}
+
+sourceSets {
+  main {
+    java {
+      srcDir "$srcGenBindingsDir/java"
+    }
+  }
+}
+
+jar {
+  manifest {
+    attributes 'Main-Class': 'water.bindings.examples.retrofit.GBM_Example'
+  }
+}
+
+test {
+    maxParallelForks = 1
+    maxHeapSize = "4g"
+    forkEvery = 1
+}
+
+task runGenerateRESTAPIBindingsSrc(type: Exec) {
+    workingDir binDir
+    // Note: by default the generated sources get written to ./h2o-bindings/src-gen/*
+    commandLine 'python', "gen_all.py"
+}
+
+task cleanGenerateRESTAPIBindings(type: Delete) {
+    delete "$binDir/results"
+    delete "$binDir/sandbox"
+    delete "$srcGenBindingsDir"
+}
+
+runGenerateRESTAPIBindingsSrc.dependsOn configurations.srcGenCompile
+
+compileJava.dependsOn runGenerateRESTAPIBindingsSrc
+clean.dependsOn cleanGenerateRESTAPIBindings
+
+//
+// Setup Gradle application runner
+//
+apply plugin: 'application'
+mainClassName = 'water.bindings.examples.retrofit.GBM_Example'

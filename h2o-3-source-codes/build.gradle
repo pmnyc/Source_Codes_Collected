@@ -1,0 +1,307 @@
+//
+// The top-level h2o-3 project does not have any java pieces itself, but
+// apply from the standard java.gradle so that 'gradle idea' generates IDE
+// files with the right settings.
+//
+// The top-level jar file that gets produced is empty and not usable
+// for anything.  Use the jar file produced by the h2o-assembly subproject.
+//
+apply from: 'gradle/java.gradle'
+
+// For multiproject setup we have to apply release plugin here (we share same release number cross all modules)
+if (project.hasProperty("doRelease")) {
+    apply from: 'gradle/release.gradle'
+}
+
+// Print out time taken for each task so we find things that are slow.
+apply from: 'gradle/timing.gradle'
+
+// The build script settings to fetch plugins and put them on
+// classpath
+buildscript {
+    repositories {
+        mavenCentral()
+        jcenter()
+    }
+
+    dependencies {
+        classpath 'com.github.jengelman.gradle.plugins:shadow:1.2.2'
+        classpath 'org.gradle.api.plugins:gradle-nexus-plugin:0.7.1'
+        classpath 'com.github.townsfolk:gradle-release:1.2'
+        classpath 'de.undercouch:gradle-download-task:2.1.0'
+        classpath 'joda-time:joda-time:2.3'
+        classpath 'com.adaptc.gradle:nexus-workflow:0.6'
+        classpath 'org.testng:testng:6.8'
+        classpath "be.insaneprogramming.gradle:animalsniffer-gradle-plugin:+"
+        classpath "io.spring.gradle:dependency-management-plugin:0.5.4.RELEASE"
+    }
+}
+
+//
+// Common configuration
+//
+ext {
+    //
+    // All published projects - their artifacts are going to Maven central
+    publishedProjects = [
+      project(':h2o-core'),
+      project(':h2o-algos'),
+      project(':h2o-web'),
+      project(':h2o-app'),
+      project(':h2o-scala_2.10'),
+      project(':h2o-scala_2.11'),
+      project(':h2o-persist-hdfs'),
+      project(':h2o-persist-s3'),
+      project(':h2o-genmodel'),
+      project(':h2o-bindings'),
+      project(':h2o-avro-parser')
+    ]
+
+    javaProjects = [
+      project(':h2o-core'),
+      project(':h2o-algos'),
+      project(':h2o-web'),
+      project(':h2o-app'),
+      project(':h2o-persist-hdfs'),
+      project(':h2o-persist-s3'),
+      project(':h2o-test-integ'),
+      project(':h2o-test-accuracy'),
+      project(':h2o-genmodel'),
+      project(':h2o-bindings'),
+      project(':h2o-avro-parser'),
+    ]
+
+    scalaProjects = [
+      project(':h2o-scala_2.10'),
+      project(':h2o-scala_2.11'),
+    ]
+
+    rProjects = [
+      project(':h2o-r')
+    ]
+
+    pythonProjects = [
+      project(':h2o-py')
+    ]
+
+    // The project which need to be run under CI only
+    testNeedsCiProject = [
+      // The S3 tests needs credentials which are provided by test environment.
+      // Because of restrictions of Amazon they cannot be stored in repository.
+      project(':h2o-persist-s3'),
+    ]
+
+    //
+    // Versions of libraries shared cross all projects
+    //
+    junitVersion  = '4.12'
+    jets3tVersion = '0.7.1'
+    awsJavaSdkVersion = '1.8.3'
+
+    //
+    // H2O's REST API version
+    //
+    h2oRESTApiVersion = '3'
+}
+
+//
+// For all projects (this and all subprojects) specify common properties and tasks
+//
+allprojects {
+    group = 'ai.h2o'
+
+    apply plugin: 'idea'
+    apply plugin: 'eclipse'
+    apply from: "$rootDir/gradle/artifacts.gradle"
+
+    ext {
+        isRelease = rootProject.hasProperty("doRelease")
+        isCi = (System.getProperty("user.name").equals("jenkins")
+                || System.getenv("CI") != null
+                || (rootProject.hasProperty("doCI") && rootProject.doCI == "true"))
+    }
+}
+
+// Compute applyFindbugsPlugin property
+// Gradle by default interpret boolean properties setup in config file as strings.
+// Hence we need here string toBoolean call
+def applyFindbugsPlugin = rootProject.hasProperty("runFindbugs") ? rootProject.runFindbugs.toBoolean() : false
+
+// 
+// Common configuration for all subprojects
+//
+subprojects {
+    // All project inherits the same versioning number
+    version = rootProject.version
+
+    repositories {
+        mavenCentral()
+        maven {
+          url "https://repository.cloudera.com/artifactory/cloudera-repos/"
+        }
+        maven {
+          url "http://repo.hortonworks.com/content/repositories/releases/"
+        }
+        maven {
+          url "http://repo.hortonworks.com/content/repositories/jetty-hadoop/"
+        }
+        maven {
+          url "http://repository.mapr.com/maven/"
+        }
+        // mavenLocal()
+    }
+
+    // Publish artifacts - we should filter subproject in future but now apply publisher plugin
+    // to all projects
+    if (project in publishedProjects) {
+      apply from: "$rootDir/gradle/publish.gradle"
+      // Generate Java6 bytecode only if specified
+      if (project.hasProperty("doJava6Bytecode")) {
+        if (project.doJava6Bytecode == "true"
+            || (project.doJava6Bytecode == "auto"
+                && System.getProperty("user.name").equals("jenkins")
+                && System.getenv("JAVA_6_HOME"))) {
+          apply from: "$rootDir/gradle/java6bytecode.gradle"
+          // Always do animal sniffing for java6
+          ext.doAnimalSniffer = "true"
+          }
+      }
+    }
+
+    apply from: "$rootDir/gradle/makeSupport.gradle"
+
+    //
+    // Early configuration of projects simplifies build resolution
+    //
+
+    // Configure Java projects
+    if (project in javaProjects) {
+        apply from: "$rootDir/gradle/java.gradle"
+        apply from: "$rootDir/gradle/cp.gradle"
+        // Include Findbugs only if the property is specified
+        if (applyFindbugsPlugin) {
+            apply from: "$rootDir/gradle/findbugs.gradle"
+        }
+        if (project.hasProperty("doCheckStyle")) {
+            apply from: "$rootDir/gradle/checkstyle.gradle"
+        }
+        if (project.hasProperty("doAnimalSniffer") && project.doAnimalSniffer == "true") {
+            apply from: "$rootDir/gradle/animalSniffer.gradle"
+        }
+        if (testNeedsCiProject.contains(project)) {
+            logger.warn("The project $project needs CI for running tests! You can pass `-PdoCI=true` to force CI behaviour.")
+            project.testMultiNode.enabled = project.ext.isCi
+        }
+    }
+
+    // Configure Scala projects
+    if (project in scalaProjects) {
+        apply from: "$rootDir/gradle/scala.gradle"
+        apply from: "$rootDir/gradle/cp.gradle"
+        if (testNeedsCiProject.contains(project)) {
+            logger.warn("The project $project needs CI for running tests! You can pass `-PdoCI=true` to force CI behaviour.")
+            project.testMultiNode.enabled = project.ext.isCi
+        }
+    }
+
+    if (project in rProjects) {
+        apply from: "$rootDir/gradle/r.gradle"
+    }
+
+    if (project in pythonProjects) {
+        apply from: "$rootDir/gradle/r.gradle"   // same plugins
+    }
+}
+
+task wrapper(type: Wrapper) {
+  gradleVersion = '2.9'
+}
+
+//
+// Setup global properties shared by all projects
+//
+ext {
+    // Collect all artifacts produced by all projects in this project - all "archives" artifacts
+    allArchives = subprojects.findAll().inject(
+            files(), { acc, pj -> 
+          if (pj in publishedProjects)
+            acc + pj.configurations.archives.allArtifacts.getFiles()
+          else
+            acc
+    })
+    // Collect all test artifacts
+    allTestArchives = files() // filed lazily below
+
+}
+
+// After evaluation of all projects collect all artifacts produced by testArchives configuration
+subprojects {
+    afterEvaluate( { pj ->
+        def testCnf = pj.configurations.findAll().find({ it.getName().equals("testArchives") })
+        if (testCnf != null) allTestArchives = allTestArchives + testCnf.allArtifacts.getFiles()
+    } )
+}
+
+// Include support for S3 syncing
+apply from: "gradle/s3sync.gradle"
+
+// This task is used by the Jenkins on test.h2o.ai.
+//
+// It creates a directory called 'target', copies everything to be released 
+// there, and everything in that directory gets uploaded to S3.
+//
+// See ~jenkins/bin/buildh2odev.sh.
+task buildH2oDevDist(type: Exec) {
+    group='Dist'
+    H2OBuildVersion bv = new H2OBuildVersion(rootDir, version);
+    def buildTimeMillis = System.currentTimeMillis();
+    def buildTimeIso8601 = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone("UTC"))
+    def buildTimeLocal = new Date()
+    def projectVersion = bv.getProjectVersion()
+    def branchName = bv.getBranch()
+    def buildNumber = bv.getBuildNumber()
+    def lastCommitHash = bv.getLastCommitHash()
+    def java6home = System.getenv("JAVA_6_HOME")
+
+    environment['BUILD_TIME_MILLIS'] = buildTimeMillis
+    environment['BUILD_TIME_ISO8601'] = buildTimeIso8601
+    environment['BUILD_TIME_LOCAL'] = buildTimeLocal
+    environment['PROJECT_VERSION'] = projectVersion
+    environment['BRANCH_NAME'] = branchName
+    environment['BUILD_NUMBER'] = buildNumber
+    environment['LAST_COMMIT_HASH'] = lastCommitHash
+    if (java6home != null) {
+      environment['JAVA_6_HOME'] = java6home
+    }
+    commandLine './make-dist.sh'
+}
+
+task dist(dependsOn: buildH2oDevDist) 
+
+//
+// Additional clean tasks to get squeaky clean.
+//
+task cleanH2oDistTmp(type: Delete) {
+    delete "$rootDir/h2o-dist/tmp"
+}
+
+task cleanTarget(type: Delete) {
+    delete "$rootDir/target"
+}
+
+clean.dependsOn cleanH2oDistTmp
+clean.dependsOn cleanTarget
+
+//
+// Import project development profiles
+//
+apply from: "gradle/profiles.gradle"
+
+//
+// Import jacoco plugin if needed
+//
+if (project.hasProperty("jacocoCoverage")) {
+    apply from: "$rootDir/gradle/jacoco.gradle"
+    build.finalizedBy jacocoAgentLink
+}
+

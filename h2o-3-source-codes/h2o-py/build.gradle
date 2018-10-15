@@ -1,0 +1,97 @@
+import org.apache.tools.ant.taskdefs.condition.Os
+import java.nio.file.FileSystems
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.zip.GZIPOutputStream
+import static java.nio.file.StandardCopyOption.*;
+
+defaultTasks 'build_python'
+description = "H2O Python Package"
+
+dependencies {
+    compile project(":h2o-assembly")
+}
+
+def getOS() {
+    String os = [Os.FAMILY_WINDOWS, Os.FAMILY_MAC, Os.FAMILY_UNIX].find {String family -> Os.isFamily(family) }
+    return os
+}
+
+def getOsSpecificCommandLine(args) { return Os.isFamily(Os.FAMILY_WINDOWS) ? [ 'cmd', '/c' ] + args : args }
+
+def bv = new H2OBuildVersion(rootDir, version)
+
+ext {
+    PROJECT_VERSION = bv.getProjectVersion()
+    T               = getProjectDir().toString()
+}
+
+task setProjectVersion << {
+    File INIT = new File([T, "h2o", "__init__.py"].join(File.separator))
+    print INIT.path
+    def txt=""
+    txt = INIT.text
+    txt = txt.replaceAll("SUBST_PROJECT_VERSION", PROJECT_VERSION)
+    INIT.write(txt)
+}
+
+task resetProjectVersion << {
+    File INIT = new File([T, "h2o", "__init__.py"].join(File.separator))
+    print INIT.path
+    def txt=""
+    txt = INIT.text
+    txt = txt.replaceAll(PROJECT_VERSION, "SUBST_PROJECT_VERSION")
+    INIT.write(txt)
+}
+
+task upgradeOrInstallTabulate(type: Exec) {
+    commandLine getOsSpecificCommandLine(["pip", "install", "tabulate", "--user", "--upgrade"])
+}
+
+task upgradeOrInstallWheel(type: Exec) {
+    commandLine getOsSpecificCommandLine(["pip", "install", "wheel", "--user", "--upgrade"])
+}
+
+task buildDist(type: Exec) {
+    commandLine getOsSpecificCommandLine(["python", "setup.py", "bdist_wheel"])
+}
+
+def testsPath = new File("./tests")
+
+task smokeTest(type: Exec) {
+    dependsOn build
+    println "PyUnit smoke test (run.py --wipeall --testsize s)..."
+    workingDir testsPath
+    commandLine 'pwd'
+	def args = ['python', '../../scripts/run.py', '--wipeall', '--testsize', 's']
+    if (project.hasProperty("jacocoCoverage")) {
+        args << '--jacoco'
+    }
+    commandLine args
+}
+
+task cleanUpSmokeTest << {
+    new File([T, "tests/results"].join(File.separator)).deleteDir()
+}
+
+task cleanCoverageData(type: Delete) {
+    delete files("${testsPath}/results/jacoco")
+}
+
+task cleaner << {
+    println "Cleaning..."
+    getProjectDir().toString()
+    new File([getProjectDir().toString(), "dist"].join(File.separator)).deleteDir()
+    new File([getProjectDir().toString(), "h2o.egg-info"].join(File.separator)).deleteDir()
+    new File([getProjectDir().toString(), " build/"].join(File.separator)).deleteDir()
+    delete fileTree(dir: "$projectDir/h2o" , include: '**/*.pyc')
+}
+
+clean.dependsOn cleaner, cleanUpSmokeTest
+upgradeOrInstallWheel.dependsOn cleaner
+// buildDist.dependsOn upgradeOrInstallTabulate
+// buildDist.dependsOn upgradeOrInstallWheel
+buildDist.dependsOn setProjectVersion
+resetProjectVersion.dependsOn buildDist
+task build_python(dependsOn: resetProjectVersion)
+build.dependsOn build_python

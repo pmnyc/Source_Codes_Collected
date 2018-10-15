@@ -1,0 +1,34 @@
+apply plugin: 'java'
+
+description = 'H2O driver for Hadoop ' + hadoopVersion
+
+sourceCompatibility = 1.6
+targetCompatibility = 1.6
+
+compileJava { 
+  options.debug = true 
+}
+
+sourceSets {
+  main {
+    java {
+      if (project.hasProperty('notYarn')) {
+        srcDir  '../h2o-mapreduce-generic/src/main/java'
+      }
+      else {
+        srcDirs '../h2o-mapreduce-generic/src/main/java', '../h2o-yarn-generic/src/main/java'
+      }
+    }
+  }
+}
+
+dependencies {
+  if (project.hasProperty('notYarn')) {
+    compile('org.apache.hadoop:hadoop-core:' + hadoopMavenArtifactVersion)
+  }
+  else {
+    compile('org.apache.hadoop:hadoop-client:' + hadoopMavenArtifactVersion)
+  }
+  compile project(':h2o-app')
+}
+

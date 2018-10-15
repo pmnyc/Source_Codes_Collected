@@ -1,0 +1,686 @@
+package water.util;
+
+import java.io.*;
+import java.net.URI;
+import java.util.*;
+
+import hex.Model;
+import hex.ToEigenVec;
+import jsr166y.CountedCompleter;
+import water.*;
+import water.fvec.Chunk;
+import water.fvec.NewChunk;
+import water.fvec.Frame;
+import water.fvec.NFSFileVec;
+import water.fvec.Vec;
+import water.parser.ParseDataset;
+import water.parser.ParseSetup;
+
+public class FrameUtils {
+
+  /** Parse given file(s) into the form of single frame represented by the given key.
+   *
+   * @param okey  destination key for parsed frame
+   * @param files  files to parse
+   * @return a new frame
+   */
+  public static Frame parseFrame(Key okey, File ...files) throws IOException {
+    if (files == null || files.length == 0) {
+      throw new IllegalArgumentException("List of files is empty!");
+    }
+    for (File f : files) {
+      if (!f.exists())
+        throw new FileNotFoundException("File not found " + f);
+    }
+    // Create output key if it is not given
+    if(okey == null) okey = Key.make(files[0].getName());
+    Key[] inKeys = new Key[files.length];
+    for (int i=0; i<files.length; i++) inKeys[i] =  NFSFileVec.make(files[i])._key;
+    return ParseDataset.parse(okey, inKeys);
+  }
+
+  /** Parse given set of URIs and produce a frame's key representing output.
+   *
+   * @param okey key for ouput frame. Can be null
+   * @param uris array of URI (file://, hdfs://, s3n://, s3a://, s3://, ...) to parse
+   * @return a frame which is saved into DKV under okey
+   * @throws IOException in case of parse error.
+   */
+  public static Frame parseFrame(Key okey, URI ...uris) throws IOException {
+    return parseFrame(okey, null, uris);
+  }
+
+  public static Frame parseFrame(Key okey, ParseSetup parseSetup, URI ...uris) throws IOException {
+    if (uris == null || uris.length == 0) {
+      throw new IllegalArgumentException("List of uris is empty!");
+    }
+    if(okey == null) okey = Key.make(uris[0].toString());
+    Key[] inKeys = new Key[uris.length];
+    for (int i=0; i<uris.length; i++)  inKeys[i] = H2O.getPM().anyURIToKey(uris[i]);
+    // Return result
+    return parseSetup != null ? ParseDataset.parse(okey, inKeys, true, ParseSetup.guessSetup(inKeys, parseSetup))
+                              : ParseDataset.parse(okey, inKeys);
+  }
+
+  public static ParseSetup guessParserSetup(ParseSetup userParserSetup, URI ...uris) throws IOException {
+    Key[] inKeys = new Key[uris.length];
+    for (int i=0; i<uris.length; i++)  inKeys[i] = H2O.getPM().anyURIToKey(uris[i]);
+
+    return ParseSetup.guessSetup(inKeys, userParserSetup);
+  }
+
+  public static Frame categoricalEncoder(Frame dataset, String[] skipCols, Model.Parameters.CategoricalEncodingScheme scheme, ToEigenVec tev) {
+    switch (scheme) {
+      case AUTO:
+      case Enum:
+      case OneHotInternal:
+        return dataset; //leave as is - most algos do their own internal default handling of enums
+      case OneHotExplicit:
+        return new CategoricalOneHotEncoder(dataset, skipCols).exec().get();
+      case Binary:
+        return new CategoricalBinaryEncoder(dataset, skipCols).exec().get();
+      case Eigen:
+        return new CategoricalEigenEncoder(tev, dataset, skipCols).exec().get();
+      default:
+        throw H2O.unimpl();
+    }
+  }
+
+  private static class Vec2ArryTsk extends MRTask<Vec2ArryTsk> {
+    final int N;
+    public double [] res;
+    public Vec2ArryTsk(int N){this.N = N;}
+    @Override public void setupLocal(){
+      res = MemoryManager.malloc8d(N);
+    }
+    @Override public void map(Chunk c){
+      final int off = (int)c.start();
+      for(int i = 0; i < c._len; i = c.nextNZ(i))
+        res[off+i] = c.atd(i);
+    }
+    @Override public void reduce(Vec2ArryTsk other){
+      if(res != other.res) {
+        for(int i = 0; i < res.length; ++i) {
+          assert res[i] == 0 || other.res[i] == 0;
+          res[i] += other.res[i]; // assuming only one nonzero
+        }
+      }
+    }
+  }
+
+  public static double [] asDoubles(Vec v){
+    if(v.length() > 100000) throw new IllegalArgumentException("Vec is too big to be extracted into array");
+    return new Vec2ArryTsk((int)v.length()).doAll(v).res;
+  }
+
+  private static class Vec2IntArryTsk extends MRTask<Vec2IntArryTsk> {
+    final int N;
+    public int [] res;
+    public Vec2IntArryTsk(int N){this.N = N;}
+    @Override public void setupLocal(){
+      res = MemoryManager.malloc4(N);
+    }
+    @Override public void map(Chunk c){
+      final int off = (int)c.start();
+      for(int i = 0; i < c._len; i = c.nextNZ(i))
+        res[off+i] = (int)c.at8(i);
+    }
+    @Override public void reduce(Vec2IntArryTsk other){
+      if(res != other.res) {
+        for(int i = 0; i < res.length; ++i) {
+          assert res[i] == 0 || other.res[i] == 0;
+          res[i] += other.res[i]; // assuming only one nonzero
+        }
+      }
+    }
+  }
+
+  public static int [] asInts(Vec v){
+    if(v.length() > 100000) throw new IllegalArgumentException("Vec is too big to be extracted into array");
+    return new Vec2IntArryTsk((int)v.length()).doAll(v).res;
+  }
+
+  /**
+   * Compute a chunk summary (how many chunks of each type, relative size, total size)
+   * @param fr
+   * @return chunk summary
+   */
+  public static ChunkSummary chunkSummary(Frame fr) {
+    return new ChunkSummary().doAll(fr);
+  }
+
+  /** Generate given numbers of keys by suffixing key by given numbered suffix. */
+  public static Key[] generateNumKeys(Key mk, int num) { return generateNumKeys(mk, num, "_part"); }
+  public static Key[] generateNumKeys(Key mk, int num, String delim) {
+    Key[] ks = new Key[num];
+    String n = mk!=null ? mk.toString() : "noname";
+    String suffix = "";
+    if (n.endsWith(".hex")) {
+      n = n.substring(0, n.length()-4); // be nice
+      suffix = ".hex";
+    }
+    for (int i=0; i<num; i++) ks[i] = Key.make(n+delim+i+suffix);
+    return ks;
+  }
+
+  /**
+   * Helper to insert missing values into a Frame
+   */
+  public static class MissingInserter extends Iced {
+    Job<Frame> _job;
+    final Key<Frame> _dataset;
+    final double _fraction;
+    final long _seed;
+
+    public MissingInserter(Key<Frame> frame, long seed, double frac){
+      _dataset = frame; _seed = seed; _fraction = frac;
+    }
+
+    /**
+     * Driver for MissingInserter
+     */
+    class MissingInserterDriver extends H2O.H2OCountedCompleter {
+      transient final Frame _frame;
+      MissingInserterDriver(Frame frame) {_frame = frame; }
+      @Override
+      public void compute2() {
+        new MRTask() {
+          @Override public void map (Chunk[]cs){
+            final Random rng = RandomUtils.getRNG(0);
+            for (int c = 0; c < cs.length; c++) {
+              for (int r = 0; r < cs[c]._len; r++) {
+                rng.setSeed(_seed + 1234 * c ^ 1723 * (cs[c].start() + r));
+                if (rng.nextDouble() < _fraction) cs[c].setNA(r);
+              }
+            }
+            _job.update(1);
+          }
+        }.doAll(_frame);
+        tryComplete();
+      }
+    }
+
+    public Job<Frame> execImpl() {
+      _job = new Job<>(_dataset, Frame.class.getName(), "MissingValueInserter");
+      if (DKV.get(_dataset) == null)
+        throw new IllegalArgumentException("Invalid Frame key " + _dataset + " (Frame doesn't exist).");
+      if (_fraction < 0 || _fraction > 1 ) throw new IllegalArgumentException("fraction must be between 0 and 1.");
+      final Frame frame = DKV.getGet(_dataset);
+      MissingInserterDriver mid = new MissingInserterDriver(frame);
+      int work = frame.vecs()[0].nChunks();
+      return _job.start(mid, work);
+    }
+  }
+
+  /**
+   * compute fraction of sparse chunks in this array.
+   * @param chks
+   * @return
+   */
+  public static double sparseRatio(Chunk [] chks) {
+    double cnt = 0;
+    double reg = 1.0/chks.length;
+    for(Chunk c :chks)
+      if(c.isSparseNA()){
+        cnt += c.sparseLenNA()/(double)c.len();
+      } else if(c.isSparseZero()){
+        cnt += c.sparseLenZero()/(double)c.len();
+      } else cnt += 1;
+    return cnt * reg;
+  }
+
+  public static double sparseRatio(Frame fr) {
+    double reg = 1.0/fr.numCols();
+    double res = 0;
+    for(Vec v:fr.vecs())
+      res += v.sparseRatio();
+    return res * reg;
+  }
+
+  public static class WeightedMean extends MRTask<WeightedMean> {
+    private double _wresponse;
+    private double _wsum;
+    public  double weightedMean() {
+      return _wsum == 0 ? 0 : _wresponse / _wsum;
+    }
+    @Override public void map(Chunk response, Chunk weight, Chunk offset) {
+      for (int i=0;i<response._len;++i) {
+        if (response.isNA(i)) continue;
+        double w = weight.atd(i);
+        if (w == 0) continue;
+        _wresponse += w*(response.atd(i)-offset.atd(i));
+        _wsum += w;
+      }
+    }
+    @Override public void reduce(WeightedMean mrt) {
+      _wresponse += mrt._wresponse;
+      _wsum += mrt._wsum;
+    }
+  }
+
+  public static class ExportTaskDriver extends H2O.H2OCountedCompleter<ExportTaskDriver> {
+    private static long DEFAULT_TARGET_PART_SIZE = 134217728L; // 128MB, default HDFS block size
+    private static int AUTO_PARTS_MAX = 128; // maximum number of parts if automatic determination is enabled
+    final Frame _frame;
+    final String _path;
+    final String _frameName;
+    final boolean _overwrite;
+    final Job _j;
+    int _nParts;
+
+    public ExportTaskDriver(Frame frame, String path, String frameName, boolean overwrite, Job j, int nParts) {
+      _frame = frame;
+      _path = path;
+      _frameName = frameName;
+      _overwrite = overwrite;
+      _j = j;
+      _nParts = nParts;
+    }
+
+    @Override
+    public void compute2() {
+      _frame.read_lock(_j._key);
+      if (_nParts < 0) {
+        EstimateSizeTask estSize = new EstimateSizeTask().dfork(_frame).getResult();
+        Log.debug("Estimator result: ", estSize);
+        // the goal is to not to create too small part files (and too many files), ideal part file size is one HDFS block
+        _nParts = Math.max((int) (estSize._size / DEFAULT_TARGET_PART_SIZE), H2O.CLOUD.size() + 1);
+        if (_nParts > AUTO_PARTS_MAX) {
+          Log.debug("Recommended number of part files (" + _nParts + ") exceeds maximum limit " + AUTO_PARTS_MAX + ". " +
+                  "Number of part files is limited to avoid slow downs when importing back to H2O."); // @tomk
+          _nParts = AUTO_PARTS_MAX;
+        }
+        Log.info("For file of estimated size " + estSize + "B determined number of parts: " + _nParts);
+      }
+      int nChunksPerPart = ((_frame.anyVec().nChunks() - 1) / _nParts) + 1;
+      boolean usePartNaming = _nParts > 1;
+      new PartExportTask(this, _frame._names, nChunksPerPart, usePartNaming).dfork(_frame);
+    }
+
+    @Override
+    public void onCompletion(CountedCompleter caller) {
+      _frame.unlock(_j);
+    }
+
+    @Override
+    public boolean onExceptionalCompletion(Throwable t, CountedCompleter caller) {
+      _frame.unlock(_j);
+      return super.onExceptionalCompletion(t, caller);
+    }
+
+    /**
+     * Trivial CSV file size estimator. Uses the first line of each non-empty chunk to estimate the size of the chunk.
+     * The total estimated size is the total of the estimated chunk sizes.
+     */
+    class EstimateSizeTask extends MRTask<EstimateSizeTask> {
+      // OUT
+      int _nNonEmpty;
+      long _size;
+
+      @Override
+      public void map(Chunk[] cs) {
+        if (cs[0]._len == 0) return;
+        Frame.CSVStream is = new Frame.CSVStream(cs, null, 1, false);
+        try {
+          _nNonEmpty++;
+          _size += is.getCurrentRowSize() * cs[0]._len;
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        } finally {
+          try { is.close(); } catch (Exception e) { Log.err(e); }
+        }
+      }
+
+      @Override
+      public void reduce(EstimateSizeTask mrt) {
+        _nNonEmpty += mrt._nNonEmpty;
+        _size += mrt._size;
+      }
+
+      @Override
+      public String toString() {
+        return "EstimateSizeTask{_nNonEmpty=" + _nNonEmpty + ", _size=" + _size + '}';
+      }
+    }
+
+    class PartExportTask extends MRTask<PartExportTask> {
+      final String[] _colNames;
+      final int _length;
+      final boolean _partNaming;
+
+      PartExportTask(H2O.H2OCountedCompleter<?> completer, String[] colNames, int length, boolean partNaming) {
+        super(completer);
+        _colNames = colNames;
+        _length = length;
+        _partNaming = partNaming;
+      }
+
+      private long copyStream(Frame.CSVStream is, OutputStream os, int firstChkIdx, int buffer_size) throws IOException {
+        long len = 0;
+        byte[] bytes = new byte[buffer_size];
+        int curChkIdx = firstChkIdx;
+        for (;;) {
+          int count = is.read(bytes, 0, buffer_size);
+          if (count <= 0) {
+            break;
+          }
+          len += count;
+          os.write(bytes, 0, count);
+          int workDone = is._curChkIdx - curChkIdx;
+          if (workDone > 0) {
+            _j.update(workDone);
+            curChkIdx = is._curChkIdx;
+          }
+        }
+        return len;
+      }
+
+      @Override
+      public void map(Chunk[] cs) {
+        Chunk anyChunk = cs[0];
+        if (anyChunk.cidx() % _length > 0) {
+          return;
+        }
+        int partIdx = anyChunk.cidx() / _length;
+        String partPath = _partNaming ? _path + "/part-m-" + String.valueOf(100000 + partIdx).substring(1) : _path;
+        Frame.CSVStream is = new Frame.CSVStream(cs, _colNames, _length, false);
+        OutputStream os = null;
+        long written = -1;
+        try {
+          os = H2O.getPM().create(partPath, _overwrite);
+          written = copyStream(is, os, anyChunk.cidx(), 4 * 1024 * 1024);
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        } finally {
+          if (os != null) {
+            try {
+              os.flush(); // Seems redundant, but seeing a short-file-read on windows sometimes
+              os.close();
+              Log.info("Part " + partIdx + " of key '" + _frameName + "' of " + written + " bytes was written to " + _path + ".");
+            } catch (Exception e) {
+              Log.err(e);
+            }
+          }
+          try {
+            is.close();
+          } catch (Exception e) {
+            Log.err(e);
+          }
+        }
+      }
+    }
+  }
+
+  public static class CategoricalOneHotEncoder extends Iced {
+    final Frame _frame;
+    Job<Frame> _job;
+    final String[] _skipCols;
+
+    public CategoricalOneHotEncoder(Frame dataset, String[] skipCols) {
+      _frame = dataset;
+      _skipCols = skipCols;
+    }
+
+    /**
+     * Driver for CategoricalOneHotEncoder
+     */
+    class CategoricalOneHotEncoderDriver extends H2O.H2OCountedCompleter {
+      final Frame _frame;
+      final Key<Frame> _destKey;
+      final String[] _skipCols;
+      CategoricalOneHotEncoderDriver(Frame frame, Key<Frame> destKey, String[] skipCols) { _frame = frame; _destKey = destKey; _skipCols = skipCols; }
+
+      class OneHotConverter extends MRTask<OneHotConverter> {
+        int[] _categorySizes;
+        public OneHotConverter(int[] categorySizes) { _categorySizes = categorySizes; }
+
+        @Override public void map(Chunk[] cs, NewChunk[] ncs) {
+          int targetColOffset = 0;
+          for (int iCol = 0; iCol < cs.length; ++iCol) {
+            Chunk col = cs[iCol];
+            int numTargetColumns = _categorySizes[iCol];
+            for (int iRow = 0; iRow < col._len; ++iRow) {
+              long val = col.isNA(iRow)? 0 : 1 + col.at8(iRow);
+              for (int j = 0; j < numTargetColumns; ++j) {
+                ncs[targetColOffset + j].addNum(val==j ? 1 : 0, 0);
+              }
+            }
+            targetColOffset += numTargetColumns;
+          }
+        }
+      }
+
+      @Override public void compute2() {
+        Vec[] frameVecs = _frame.vecs();
+        int numCategoricals = 0;
+        for (int i=0;i<frameVecs.length;++i)
+          if (frameVecs[i].isCategorical() && ArrayUtils.find(_skipCols, _frame._names[i])==-1)
+            numCategoricals++;
+
+        Vec[] extraVecs = new Vec[_skipCols.length];
+        for (int i=0; i< extraVecs.length; ++i) {
+          Vec v = _frame.vec(_skipCols[i]); //can be null
+          if (v!=null) extraVecs[i] = v;
+        }
+
+        Frame categoricalFrame = new Frame();
+        Frame outputFrame = new Frame(_destKey);
+        int[] categorySizes = new int[numCategoricals];
+        int numOutputColumns = 0;
+        List<String> catnames= new ArrayList<>();
+        for (int i = 0, j = 0; i < frameVecs.length; ++i) {
+          if (ArrayUtils.find(_skipCols, _frame._names[i])>=0) continue;
+          int numCategories = frameVecs[i].cardinality(); // Returns -1 if non-categorical variable
+          if (numCategories > 0) {
+            categoricalFrame.add(_frame.name(i), frameVecs[i]);
+            categorySizes[j] = numCategories + 1/* for NAs */;
+            numOutputColumns += categorySizes[j];
+            catnames.add(_frame.name(i) + ".missing(NA)");
+            for (int k=0;k<categorySizes[j]-1;++k)
+              catnames.add(_frame.name(i) + "." + _frame.vec(i).domain()[k]);
+            ++j;
+          } else {
+            catnames.add(_frame.name(i));
+            outputFrame.add(_frame.name(i), frameVecs[i].makeCopy());
+          }
+        }
+        OneHotConverter mrtask = new OneHotConverter(categorySizes);
+        Frame binaryCols = mrtask.doAll(numOutputColumns, Vec.T_NUM, categoricalFrame).outputFrame();
+        binaryCols._names = catnames.toArray(new String[0]);
+        outputFrame.add(binaryCols);
+        for (int i=0;i<extraVecs.length;++i) {
+          if (extraVecs[i]!=null)
+            outputFrame.add(_skipCols[i], extraVecs[i].makeCopy());
+        }
+        DKV.put(outputFrame);
+        tryComplete();
+      }
+    }
+
+    public Job<Frame> exec() {
+      if (_frame == null)
+        throw new IllegalArgumentException("Frame doesn't exist.");
+      Key<Frame> destKey = Key.makeSystem(Key.make().toString());
+      _job = new Job<>(destKey, Frame.class.getName(), "CategoricalOneHotEncoder");
+      int workAmount = _frame.lastVec().nChunks();
+      return _job.start(new CategoricalOneHotEncoderDriver(_frame, destKey, _skipCols), workAmount);
+    }
+  }
+
+
+  /**
+   * Helper to convert a categorical variable into a "binary" encoding format. In this format each categorical value is
+   * first assigned an integer value, then that integer is written in binary, and each bit column is converted into a
+   * separate column. This is intended as an improvement to an existing one-hot transformation.
+   * For each categorical variable we assume that the number of categories is 1 + domain cardinality, the extra
+   * category is reserved for NAs.
+   * See http://www.willmcginnis.com/2015/11/29/beyond-one-hot-an-exploration-of-categorical-variables/
+   */
+  public static class CategoricalBinaryEncoder extends Iced {
+    final Frame _frame;
+    Job<Frame> _job;
+    final String[] _skipCols;
+
+    public CategoricalBinaryEncoder(Frame dataset, String[] skipCols) {
+      _frame = dataset;
+      _skipCols = skipCols;
+    }
+
+    /**
+     * Driver for CategoricalBinaryEncoder
+     */
+    class CategoricalBinaryEncoderDriver extends H2O.H2OCountedCompleter {
+      final Frame _frame;
+      final Key<Frame> _destKey;
+      final String[] _skipCols;
+      CategoricalBinaryEncoderDriver(Frame frame, Key<Frame> destKey, String[] skipCols) { _frame = frame; _destKey = destKey; _skipCols = skipCols; }
+
+      class BinaryConverter extends MRTask<BinaryConverter> {
+        int[] _categorySizes;
+        public BinaryConverter(int[] categorySizes) { _categorySizes = categorySizes; }
+
+        @Override public void map(Chunk[] cs, NewChunk[] ncs) {
+          int targetColOffset = 0;
+          for (int iCol = 0; iCol < cs.length; ++iCol) {
+            Chunk col = cs[iCol];
+            int numTargetColumns = _categorySizes[iCol];
+            for (int iRow = 0; iRow < col._len; ++iRow) {
+              long val = col.isNA(iRow)? 0 : 1 + col.at8(iRow);
+              for (int j = 0; j < numTargetColumns; ++j) {
+                ncs[targetColOffset + j].addNum(val & 1, 0);
+                val >>>= 1;
+              }
+              assert val == 0 : "";
+            }
+            targetColOffset += numTargetColumns;
+          }
+        }
+      }
+
+      @Override public void compute2() {
+        Vec[] frameVecs = _frame.vecs();
+        int numCategoricals = 0;
+        for (int i=0;i<frameVecs.length;++i)
+          if (frameVecs[i].isCategorical() && ArrayUtils.find(_skipCols, _frame._names[i])==-1)
+            numCategoricals++;
+
+        Vec[] extraVecs = new Vec[_skipCols.length];
+        for (int i=0; i< extraVecs.length; ++i) {
+          Vec v = _frame.vec(_skipCols[i]); //can be null
+          if (v!=null) extraVecs[i] = v;
+        }
+
+        Frame categoricalFrame = new Frame();
+        Frame outputFrame = new Frame(_destKey);
+        int[] binaryCategorySizes = new int[numCategoricals];
+        int numOutputColumns = 0;
+        for (int i = 0, j = 0; i < frameVecs.length; ++i) {
+          if (ArrayUtils.find(_skipCols, _frame._names[i])>=0) continue;
+          int numCategories = frameVecs[i].cardinality(); // Returns -1 if non-categorical variable
+          if (numCategories > 0) {
+            categoricalFrame.add(_frame.name(i), frameVecs[i]);
+            binaryCategorySizes[j] = 1 + MathUtils.log2(numCategories - 1 + 1/* for NAs */);
+            numOutputColumns += binaryCategorySizes[j];
+            ++j;
+          } else
+            outputFrame.add(_frame.name(i), frameVecs[i].makeCopy());
+        }
+        BinaryConverter mrtask = new BinaryConverter(binaryCategorySizes);
+        Frame binaryCols = mrtask.doAll(numOutputColumns, Vec.T_NUM, categoricalFrame).outputFrame();
+        // change names of binaryCols so that they reflect the original names of the categories
+        for (int i = 0, j = 0; i < binaryCategorySizes.length; j += binaryCategorySizes[i++]) {
+          for (int k = 0; k < binaryCategorySizes[i]; ++k) {
+            binaryCols._names[j + k] = categoricalFrame.name(i) + ":" + k;
+          }
+        }
+        outputFrame.add(binaryCols);
+        for (int i=0;i<extraVecs.length;++i) {
+          if (extraVecs[i]!=null)
+            outputFrame.add(_skipCols[i], extraVecs[i].makeCopy());
+        }
+        DKV.put(outputFrame);
+        tryComplete();
+      }
+    }
+
+    public Job<Frame> exec() {
+      if (_frame == null)
+        throw new IllegalArgumentException("Frame doesn't exist.");
+      Key<Frame> destKey = Key.makeSystem(Key.make().toString());
+      _job = new Job<>(destKey, Frame.class.getName(), "CategoricalBinaryEncoder");
+      int workAmount = _frame.lastVec().nChunks();
+      return _job.start(new CategoricalBinaryEncoderDriver(_frame, destKey, _skipCols), workAmount);
+    }
+  }
+
+  /**
+   * Helper to convert a categorical variable into the first eigenvector of the dummy-expanded matrix.
+   */
+  public static class CategoricalEigenEncoder {
+    final Frame _frame;
+    Job<Frame> _job;
+    final String[] _skipCols;
+    final ToEigenVec _tev;
+
+    public CategoricalEigenEncoder(ToEigenVec tev, Frame dataset, String[] skipCols) {
+      _frame = dataset;
+      _skipCols = skipCols;
+      _tev = tev;
+    }
+
+    /**
+     * Driver for CategoricalEigenEncoder
+     */
+    class CategoricalEigenEncoderDriver extends H2O.H2OCountedCompleter {
+      final Frame _frame;
+      final Key<Frame> _destKey;
+      final String[] _skipCols;
+      final ToEigenVec _tev;
+      CategoricalEigenEncoderDriver(ToEigenVec tev, Frame frame, Key<Frame> destKey, String[] skipCols) {
+        _tev = tev; _frame = frame; _destKey = destKey; _skipCols = skipCols;
+        assert _tev!=null : "Override toEigenVec for this Algo!";
+      }
+
+      @Override public void compute2() {
+        Vec[] frameVecs = _frame.vecs();
+        Vec[] extraVecs = new Vec[_skipCols.length];
+        for (int i=0; i< extraVecs.length; ++i) {
+          Vec v = _frame.vec(_skipCols[i]); //can be null
+          if (v!=null) extraVecs[i] = v;
+        }
+        Frame outputFrame = new Frame(_destKey);
+        for (int i = 0; i < frameVecs.length; ++i) {
+          if (ArrayUtils.find(_skipCols, _frame._names[i])>=0) continue;
+          if (frameVecs[i].isCategorical())
+            outputFrame.add(_frame.name(i), _tev.toEigenVec(frameVecs[i]));
+          else
+            outputFrame.add(_frame.name(i), frameVecs[i].makeCopy());
+        }
+        for (int i=0;i<extraVecs.length;++i) {
+          if (extraVecs[i]!=null)
+            outputFrame.add(_skipCols[i], extraVecs[i].makeCopy());
+        }
+        DKV.put(outputFrame);
+        tryComplete();
+      }
+    }
+
+    public Job<Frame> exec() {
+      if (_frame == null)
+        throw new IllegalArgumentException("Frame doesn't exist.");
+      Key<Frame> destKey = Key.makeSystem(Key.make().toString());
+      _job = new Job<>(destKey, Frame.class.getName(), "CategoricalEigenEncoder");
+      int workAmount = _frame.lastVec().nChunks();
+      return _job.start(new CategoricalEigenEncoderDriver(_tev, _frame, destKey, _skipCols), workAmount);
+    }
+  }
+
+  static public void cleanUp(IcedHashMap<Key, StackTraceElement[]> toDelete) {
+    Futures fs = new Futures();
+    for (Key k : toDelete.keySet()) {
+      k.remove(fs);
+    }
+    fs.blockForPending();
+    toDelete.clear();
+  }
+}

@@ -1,0 +1,12 @@
+task cpLibs(type:Sync) {
+    def skipFiles = {
+      // Use parent property containing all artifacts 
+        allArchives + allTestArchives
+    }
+
+    from { project.configurations.runtime.minus(skipFiles()) }
+    from { project.configurations.testRuntime.minus(skipFiles()) }
+    
+    into "$rootDir/lib"
+}
+

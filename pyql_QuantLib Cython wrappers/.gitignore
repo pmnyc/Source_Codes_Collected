@@ -1,0 +1,19 @@
+build/*
+docs/build
+.idea/*
+.ropeproject/*
+quantlib.egg-info/*
+QuantLib.dll
+symbol_win*.def
+*.cpp
+*.so
+*.h
+*.pyc
+*.swp
+
+# junk #
+########
+
+*.*~
+*.*#
+*.ipynb_checkpoints

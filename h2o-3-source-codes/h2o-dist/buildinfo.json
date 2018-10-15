@@ -1,0 +1,206 @@
+{
+    "version_major" : 1,
+    "version_minor" : 0,
+
+    "build_time_millis" : SUBST_BUILD_TIME_MILLIS,
+    "build_time_iso8601" : "SUBST_BUILD_TIME_ISO8601",
+    "build_time_local" : "SUBST_BUILD_TIME_LOCAL",
+
+    "project_version" : "SUBST_PROJECT_VERSION",
+    "branch_name" : "SUBST_BRANCH_NAME",
+    "build_number" : SUBST_BUILD_NUMBER,
+    "last_commit_hash" : "SUBST_LAST_COMMIT_HASH",
+
+    "zip_file_name" : "h2o-SUBST_PROJECT_VERSION.zip",
+    "zip_file_path" : "h2o-SUBST_PROJECT_VERSION.zip",
+    "wheel_file_name" : "SUBST_WHEEL_FILE_NAME",
+    "wheel_file_path" : "Python/SUBST_WHEEL_FILE_NAME",
+    "r_repo_path" : "R",
+
+    "hadoop_distributions" : [
+        {
+            "distribution" : "cdh5.2",
+            "zip_file_name" : "h2o-SUBST_PROJECT_VERSION-cdh5.2.zip",
+            "zip_file_path" : "h2o-SUBST_PROJECT_VERSION-cdh5.2.zip"
+        },
+        {
+            "distribution" : "cdh5.3",
+            "zip_file_name" : "h2o-SUBST_PROJECT_VERSION-cdh5.3.zip",
+            "zip_file_path" : "h2o-SUBST_PROJECT_VERSION-cdh5.3.zip"
+        },
+        {
+            "distribution" : "cdh5.4.2",
+            "zip_file_name" : "h2o-SUBST_PROJECT_VERSION-cdh5.4.2.zip",
+            "zip_file_path" : "h2o-SUBST_PROJECT_VERSION-cdh5.4.2.zip"
+        },
+        {
+            "distribution" : "cdh5.5.3",
+            "zip_file_name" : "h2o-SUBST_PROJECT_VERSION-cdh5.5.3.zip",
+            "zip_file_path" : "h2o-SUBST_PROJECT_VERSION-cdh5.5.3.zip"
+        },
+        {
+            "distribution" : "cdh5.6.0",
+            "zip_file_name" : "h2o-SUBST_PROJECT_VERSION-cdh5.6.0.zip",
+            "zip_file_path" : "h2o-SUBST_PROJECT_VERSION-cdh5.6.0.zip"
+        },
+        {
+            "distribution" : "cdh5.7.0",
+            "zip_file_name" : "h2o-SUBST_PROJECT_VERSION-cdh5.7.0.zip",
+            "zip_file_path" : "h2o-SUBST_PROJECT_VERSION-cdh5.7.0.zip"
+        },
+        {
+            "distribution" : "hdp2.1",
+            "zip_file_name" : "h2o-SUBST_PROJECT_VERSION-hdp2.1.zip",
+            "zip_file_path" : "h2o-SUBST_PROJECT_VERSION-hdp2.1.zip"
+        },
+        {
+            "distribution" : "hdp2.2",
+            "zip_file_name" : "h2o-SUBST_PROJECT_VERSION-hdp2.2.zip",
+            "zip_file_path" : "h2o-SUBST_PROJECT_VERSION-hdp2.2.zip"
+        },
+        {
+            "distribution" : "hdp2.3",
+            "zip_file_name" : "h2o-SUBST_PROJECT_VERSION-hdp2.3.zip",
+            "zip_file_path" : "h2o-SUBST_PROJECT_VERSION-hdp2.3.zip"
+        },
+        {
+            "distribution" : "hdp2.4",
+            "zip_file_name" : "h2o-SUBST_PROJECT_VERSION-hdp2.4.zip",
+            "zip_file_path" : "h2o-SUBST_PROJECT_VERSION-hdp2.4.zip"
+        },
+        {
+            "distribution" : "mapr3.1.1",
+            "zip_file_name" : "h2o-SUBST_PROJECT_VERSION-mapr3.1.1.zip",
+            "zip_file_path" : "h2o-SUBST_PROJECT_VERSION-mapr3.1.1.zip"
+        },
+        {
+            "distribution" : "mapr4.0.1",
+            "zip_file_name" : "h2o-SUBST_PROJECT_VERSION-mapr4.0.1.zip",
+            "zip_file_path" : "h2o-SUBST_PROJECT_VERSION-mapr4.0.1.zip"
+        },
+        {
+            "distribution" : "mapr5.0",
+            "zip_file_name" : "h2o-SUBST_PROJECT_VERSION-mapr5.0.zip",
+            "zip_file_path" : "h2o-SUBST_PROJECT_VERSION-mapr5.0.zip"
+        },
+        {
+            "distribution" : "mapr5.1",
+            "zip_file_name" : "h2o-SUBST_PROJECT_VERSION-mapr5.1.zip",
+            "zip_file_path" : "h2o-SUBST_PROJECT_VERSION-mapr5.1.zip"
+        }
+    ],
+
+    "user_documents" : [
+        {
+            "name" : "H2O Documentation",
+            "id"   : "doc-front",
+            "path" : "docs-website/index.html"
+        },
+        {
+            "name" : "H2O User Guide",
+            "id"   : "doc-flow",
+            "path" : "docs-website/h2o-docs/index.html"
+        },
+        {
+            "name" : "Recent Changes",
+            "id"   : "doc-recent-changes",
+            "path" : "https://github.com/h2oai/h2o-3/blob/SUBST_LAST_COMMIT_HASH/Changes.md"
+        },
+        {
+            "name" : "R User Documentation",
+            "id"   : "doc-r-pdf",
+            "path" : "docs-website/h2o-r/h2o_package.pdf"
+        },
+        {
+            "name" : "Python User Documentation",
+            "id"   : "doc-py",
+            "path" : "docs-website/h2o-py/docs/index.html"
+        },
+        {
+            "name" : "Sparkling Water Readme",
+            "id"   : "doc-sparkling-water",
+            "path" : "https://github.com/h2oai/sparkling-water/blob/master/README.md"
+        },
+        {
+            "name" : "Migrating to H2O 3",
+            "id"   : "doc-migration",
+            "path" : "docs-website/h2o-docs/Migration.html"
+        }
+    ],
+
+    "developer_documents" : [
+        {
+            "name" : "Github README",
+            "id"   : "doc-readme",
+            "path" : "https://github.com/h2oai/h2o-dev/blob/SUBST_LAST_COMMIT_HASH/README.md"
+        },
+        {
+            "name" : "REST API Documentation",
+            "id"   : "doc-rest",
+            "path" : "docs-website/h2o-docs/rest-api-reference.html"
+        },
+        {
+            "name" : "H2O Core Java Developer Documentation (Javadoc)",
+            "id"   : "doc-h2o-core-javadoc",
+            "path" : "docs-website/h2o-core/javadoc/index.html"
+        },
+        {
+            "name" : "H2O Algos Java Developer Documentation (Javadoc)",
+            "id"   : "doc-h2o-algos-javadoc",
+            "path" : "docs-website/h2o-algos/javadoc/index.html"
+        },
+        {
+            "name" : "H2O Generated POJO Model API Developer Documentation (Javadoc)",
+            "id"   : "doc-h2o-genmodel-javadoc",
+            "path" : "docs-website/h2o-genmodel/javadoc/index.html"
+        },
+        {
+            "name" : "H2O Scala API Developer Documentation (Scaladoc)",
+            "id"   : "doc-h2o-scala-javadoc",
+            "path" : "docs-website/h2o-scala_2.10/scaladoc/index.html"
+        },
+        {
+            "name" : "H2O Scala 2.10 API Developer Documentation (Scaladoc)",
+            "id"   : "doc-h2o-scala-2-10-javadoc",
+            "path" : "docs-website/h2o-scala_2.10/scaladoc/index.html"
+        },
+        {
+            "name" : "H2O Scala 2.11 API Developer Documentation (Scaladoc)",
+            "id"   : "doc-h2o-scala-2-11-javadoc",
+            "path" : "docs-website/h2o-scala_2.11/scaladoc/index.html"
+        }
+    ],
+
+    "booklets" : [
+        {
+            "name" : "GLM",
+            "id"   : "booklet-glm",
+            "path" : "docs-website/h2o-docs/booklets/GLMBooklet.pdf"
+        },
+        {
+            "name" : "DeepLearning",
+            "id"   : "booklet-deeplearning",
+            "path" : "docs-website/h2o-docs/booklets/DeepLearningBooklet.pdf"
+        },
+        {
+            "name" : "GBM",
+            "id"   : "booklet-gbm",
+            "path" : "docs-website/h2o-docs/booklets/GBMBooklet.pdf"
+        },
+        {
+            "name" : "R",
+            "id"   : "booklet-r",
+            "path" : "docs-website/h2o-docs/booklets/RBooklet.pdf"
+        },
+        {
+            "name" : "Python",
+            "id"   : "booklet-python",
+            "path" : "docs-website/h2o-docs/booklets/PythonBooklet.pdf"
+        },
+        {
+            "name" : "SparklingWater",
+            "id"   : "booklet-sparklingwater",
+            "path" : "docs-website/h2o-docs/booklets/SparklingWaterBooklet.pdf"
+        }
+    ]
+}

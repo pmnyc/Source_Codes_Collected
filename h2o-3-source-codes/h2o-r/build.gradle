@@ -1,0 +1,208 @@
+import org.apache.tools.ant.taskdefs.condition.Os
+import java.nio.file.FileSystems
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.zip.GZIPOutputStream
+import static java.nio.file.StandardCopyOption.*;
+
+defaultTasks 'build_rh2o'
+description = "H2O R Package"
+
+//apply plugin: 'water.gradle.plugins.convertR2html'
+//apply plugin: 'water.gradle.plugins.manageLocalClouds'
+
+dependencies {
+    compile project(":h2o-assembly")
+}
+
+def getOS() {
+    String os = [Os.FAMILY_WINDOWS, Os.FAMILY_MAC, Os.FAMILY_UNIX].find {String family -> Os.isFamily(family) }
+    return os
+}
+
+def getOsSpecificCommandLine(args) { return Os.isFamily(Os.FAMILY_WINDOWS) ? [ 'cmd', '/c' ] + args : args }
+def newPath(String first, String... args) { return FileSystems.getDefault().getPath(first, args) }
+def copyFile(src, tgt) {
+    if (!(src instanceof Path)) src = newPath(*(src as List))
+    if (!(tgt instanceof Path)) tgt = newPath(*(tgt as List))
+    Files.copy(src, tgt, COPY_ATTRIBUTES, REPLACE_EXISTING)
+}
+
+def gzip(String s, String outFile){
+    GZIPOutputStream zipStream = new GZIPOutputStream(new FileOutputStream(outFile))
+    zipStream.write(s.getBytes())
+    zipStream.close()
+}
+
+def bv = new H2OBuildVersion(rootDir, version)
+
+ext {
+    BUILD_BRANCH       = bv.getBranch()
+    BUILD_NUMBER       = bv.getBuildNumber()
+    PROJECT_VERSION    = bv.getProjectVersion()
+    PDF_LATEX          = ""                     /* task pdflatex          */
+    R_VERSION          = ""                     /* task getRVersion       */
+    T                  = getProjectDir().toString()
+    SYS_OS             = getOS()
+    REPO_PATH_WIN      = ["bin", "windows", "contrib", "3.1"].join(File.separator)
+    REPO_PATH_MAC      = ["bin", "macosx",  "contrib", "3.1"].join(File.separator)
+    H2O_R_SOURCE_FILE  = "h2o_${PROJECT_VERSION}.tar.gz"
+}
+
+task untar << {
+    copy {
+        from tarTree(resources.gzip(H2O_R_SOURCE_FILE))
+        into getProjectDir()
+    }
+}
+
+task gitbranch(type: Exec) {
+    commandLine getOsSpecificCommandLine(["git",  "branch"])
+    standardOutput = new ByteArrayOutputStream()
+    ext.output = {
+        if (standardOutput.toString().replace("\n", "").replace(' ','').split("\\*").length != 2) return ""
+        return standardOutput.toString().replace("\n", "").replace(' ','').split("\\*")[1]
+    }
+}
+
+task getRVersion(type: Exec) {
+    commandLine getOsSpecificCommandLine(['R', "--vanilla", "-q", "-e", "options(echo=FALSE);cat(paste(R.Version()\$major, R.Version()\$minor, collapse = '.', sep = '.'));"])
+    standardOutput = new ByteArrayOutputStream()
+    ext.output = {
+        return standardOutput.toString().replace(' ','').split("\\\n")[1] //replace('-','_').
+    }
+}
+
+task pdflatex(type: Exec) {
+    ignoreExitValue = true
+    if (SYS_OS == "windows") commandLine 'cmd', '/c', 'where', 'pdflatex'
+    else commandLine 'which', 'pdflatex'
+    standardOutput = new ByteArrayOutputStream()
+    println standardOutput
+    ext.output = {
+        return standardOutput.toString().replace("\n","")
+    }
+}
+
+pdflatex.onlyIf{ SYS_OS != "windows"}
+
+task setProperties << {
+    project.ext.BUILD_BRANCH = BUILD_BRANCH
+    project.ext.R_VERSION    = getRVersion.output()
+    project.ext.PDF_LATEX    = (pdflatex.output()).toLowerCase().contains("pdflatex") ? pdflatex.output() : ""
+    println "Git Branch: " + BUILD_BRANCH
+    println "R Version: " + R_VERSION
+    println "PDF LATEX: " + PDF_LATEX
+}
+
+task setPackageFiles << {
+    File h2oRd       = new File([T, "h2o-package", "man", "h2o-package.Rd"]                  .join(File.separator))
+    File DESCRIPTION = new File([T, "h2o-package", "DESCRIPTION"]                            .join(File.separator))
+    File DESC_TEMP   = new File([T, "h2o-DESCRIPTION.template"]                              .join(File.separator))
+    File h2oRd_TEMP  = new File([T, "h2o-package.template"]                                  .join(File.separator))
+    File build_branch= new File([T, "h2o-package", "inst", "branch.txt"]                     .join(File.separator))
+    File build_num   = new File([T, "h2o-package", "inst", "buildnum.txt"]                   .join(File.separator))
+    File src_info    = new File([T, "h2o-package", "inst", "source_code_repository_info.txt"].join(File.separator))
+    def txt = ""
+    def today = new Date()
+    txt = DESC_TEMP.text
+    txt = txt.replaceAll("SUBST_PROJECT_VERSION", PROJECT_VERSION).replaceAll("SUBST_PROJECT_BRANCH", BUILD_BRANCH).replaceAll("SUBST_PROJECT_DATE", today.format("YYYY-MM-dd"))
+    DESCRIPTION.write(txt)
+    txt = h2oRd_TEMP.text
+    txt = txt.replaceAll("SUBST_PROJECT_VERSION", PROJECT_VERSION).replaceAll("SUBST_PROJECT_BRANCH", BUILD_BRANCH).replaceAll("SUBST_PROJECT_DATE", today.toString())
+    h2oRd.parentFile.mkdirs()
+    h2oRd.write(txt)
+    build_branch.write(BUILD_BRANCH + "\n")
+    build_num.write(BUILD_NUMBER + "\n")
+    src_info.write("https://github.com/h2oai/h2o-dev")
+}
+
+task buildPackageDocumentation(type: Exec) {
+    commandLine getOsSpecificCommandLine(['R', "-q", "-e", "library(devtools); document('h2o-package');"])
+}
+
+task genPDF(type: Exec) {
+    ignoreExitValue=true
+    if (SYS_OS == "windows") commandLine 'cmd', '/c', 'R', 'CMD', "Rd2pdf", "--force", "--output=h2o_package.pdf", "--title=\"h2o\"", "--no-preview", "h2o-package\\man"
+    else commandLine 'R', "CMD", "Rd2pdf", "--force", "--output=h2o_package.pdf", "--title=\"h2o\"", "--no-preview", "h2o-package/man"
+    standardOutput = new ByteArrayOutputStream() // > /dev/null
+}
+
+genPDF.onlyIf { PDF_LATEX != "" && SYS_OS != "windows" }
+
+task cpPDF << {
+    new File([T,"R"].join(File.separator)).mkdirs()
+    copyFile([T,"h2o_package.pdf"], [T,"R", "h2o_package.pdf"])
+}
+
+cpPDF.onlyIf { PDF_LATEX.contains("pdflatex") }
+
+task cpH2OAppJar << {
+    def path = [T, "h2o-package", "inst", "java"].join(File.separator)
+    File f = new File(path)
+    f.deleteDir()
+    new File(path).mkdirs()
+    copyFile([T,"..", "build", "h2o.jar"],[T, "h2o-package", "inst", "java", "h2o.jar"])
+}
+
+task buildPKG(type: Exec) { commandLine getOsSpecificCommandLine(['R', 'CMD', 'build', 'h2o-package']) }
+task cpToR << {
+    new File([T, "R", "src", "contrib"].join(File.separator)).mkdirs()
+    copyFile([T, "README.md"], [T, "R", "README.md"])
+    copyFile([T, H2O_R_SOURCE_FILE], [T, "R", "src", "contrib", H2O_R_SOURCE_FILE])
+}
+task publishPKG(type: Exec) { commandLine getOsSpecificCommandLine(['Rscript', "-e", "tools::write_PACKAGES('R/src/contrib')"]) }
+
+
+task cleanUp << {
+    new File([T, "h2o_package.pdf"].join(File.separator)).delete()
+    new File([T, "h2o-package", "man"].join(File.separator)).deleteDir()
+    new File([T, "h2o-package", "inst", "branch.txt"].join(File.separator)).delete()
+    new File([T, "h2o-package", "inst", "buildnum.txt"].join(File.separator)).delete()
+    new File([T, "h2o-package", "inst", "java"].join(File.separator)).deleteDir()
+    new File([T, "h2o"].join(File.separator)).deleteDir()
+    new File([T, "PACKAGES"].join(File.separator)).delete()
+    new File([T, "R"].join(File.separator)).deleteDir()
+    new File([T, "build"].join(File.separator)).deleteDir()
+    new File(T).eachFile { if (it.name =~ "tar" || it.name =~ "zip" || it.name =~ "gz") it.delete() }
+}
+
+task cleaner << {
+    println "Cleaning..."
+    new File([T, "h2o_package.pdf"].join(File.separator)).delete()
+    new File([T, "h2o"].join(File.separator)).deleteDir()
+    new File([T, "PACKAGES"].join(File.separator)).delete()
+    new File(T).eachFile { if (it.name =~ "tar" || it.name =~ "zip" || it.name =~ "gz") it.delete() }
+}
+
+def testsPath = new File("./tests")
+
+task smokeTest(type: Exec) {
+    println "R smoke test (run.py --wipeall --testsize s)..."
+    workingDir testsPath
+	def args = ['python', 'run.py', '--wipeall', '--testsize', 's']
+    if (project.hasProperty("jacocoCoverage")) {
+        args << '--jacoco'
+    }
+    commandLine args
+}
+
+task cleanUpSmokeTest << {
+    new File([T, "tests/results"].join(File.separator)).deleteDir()
+}
+
+clean.dependsOn cleanUp, cleanUpSmokeTest
+setProperties.dependsOn gitbranch, getRVersion, pdflatex
+cpH2OAppJar.dependsOn setProperties
+setPackageFiles.dependsOn cpH2OAppJar
+buildPackageDocumentation.dependsOn setPackageFiles
+genPDF.dependsOn setPackageFiles
+genPDF.dependsOn buildPackageDocumentation
+cpPDF.dependsOn genPDF
+buildPKG.dependsOn cpPDF
+cpToR.dependsOn buildPKG
+publishPKG.dependsOn cpToR
+untar.dependsOn publishPKG
+cleaner.dependsOn untar
+task build_rh2o(dependsOn: cleaner)
+build.dependsOn build_rh2o

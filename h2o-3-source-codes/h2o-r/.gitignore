@@ -1,0 +1,5 @@
+results/
+*.Rout
+buildnum.txt
+h2o-r.Rproj
+.Rd2pdf*/
